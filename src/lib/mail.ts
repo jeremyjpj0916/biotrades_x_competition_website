@@ -8,7 +8,12 @@ export async function sendMail(to: string, subject: string, body: string) {
     }
     throw new Error("SMTP delivery is unavailable");
   }
-  const transport = nodemailer.createTransport(process.env.SMTP_URL);
+  const transport = nodemailer.createTransport({
+    url: process.env.SMTP_URL,
+    connectionTimeout: 5000,
+    greetingTimeout: 5000,
+    socketTimeout: 15000,
+  });
   await transport.sendMail({
     from: process.env.MAIL_FROM || "BioTrades X <no-reply@example.com>",
     to,

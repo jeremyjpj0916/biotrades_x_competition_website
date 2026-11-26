@@ -6,7 +6,8 @@ export async function openTestMailbox() {
   const messages = new Map();
   const http = createHttpServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1:3101");
-    const link = messages.get(url.searchParams.get("email"));
+    const kind = url.searchParams.get("kind") ?? "verify-email";
+    const link = messages.get(`${url.searchParams.get("email")}:${kind}`);
     response.writeHead(link ? 200 : 404, { "content-type": "application/json", "cache-control": "no-store" });
     response.end(JSON.stringify(link ? { link } : { message: "No test message received yet" }));
   });
@@ -26,8 +27,10 @@ export async function openTestMailbox() {
           .join("\n")
           .replace(/=\n/g, "")
           .replace(/=([A-F0-9]{2})/g, (_, value) => String.fromCharCode(parseInt(value, 16)));
-        const link = decoded.match(/http:\/\/localhost:3100\/api\/auth\/verify-email\?[^\s]+/);
-        if (recipient && link) messages.set(recipient, link[0]);
+        const link = decoded.match(
+          /http:\/\/localhost:3100\/api\/auth\/(verify-email|reset-password)[/?]\S+/,
+        );
+        if (recipient && link) messages.set(`${recipient}:${link[1]}`, link[0]);
         data = null;
         socket.write("250 Message accepted\r\n");
       } else if (/^DATA$/i.test(line)) {

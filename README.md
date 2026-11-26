@@ -20,7 +20,7 @@ For Docker Compose, copy `.env.example` to `.env`, set `BETTER_AUTH_SECRET` usin
 
 ## Operating costs
 
-The default scoring feed is keyless and free to fetch. Public pages publish derived returns, typically about two days after the session. A PostgreSQL-backed request budget and shared cache keep provider traffic independent of participant count. A small, always-on machine can run the site, worker and database together. Public hosting, a domain and outbound email depend on your setup. [Market data and licensing](docs/MARKET_DATA.md)
+The default scoring feed is keyless and free to fetch. Public pages publish derived returns, typically about two days after the session. A PostgreSQL-backed request budget and shared cache keep provider traffic independent of participant count. A small, always-on machine can run the site, worker, database and outbound mail together. Direct mail uses Postfix on your own host and requires a domain, suitable DNS records, and outbound TCP port 25. [Market data and licensing](docs/MARKET_DATA.md) · [Direct outbound email](docs/OPERATIONS.md#direct-outbound-email)
 
 ## Documentation
 

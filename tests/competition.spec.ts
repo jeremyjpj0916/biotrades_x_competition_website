@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { useTurnstileFixture } from "./support/turnstile";
 
-test("registers, manages a private stock pick, and publishes accurate competition tables", async ({
+test("registers, manages a private stock pick, publishes accurate competition tables, and recovers access", async ({
   page,
   isMobile,
 }) => {
@@ -285,6 +285,34 @@ test("registers, manages a private stock pick, and publishes accurate competitio
     await page.goto("/join?mode=sign-in");
     await page.getByLabel("Email").fill(email);
     await page.getByLabel("Password", { exact: true }).fill(password);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "My profile", exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    await page.waitForURL("http://localhost:3100/");
+    await page.goto("/join?mode=sign-in");
+    await page.getByRole("button", { name: "Forgot password", exact: true }).click();
+    await page.getByLabel("Email").fill(email);
+    await page.getByRole("button", { name: "Recover your account", exact: true }).click();
+    await expect(page.getByRole("status")).toContainText("you’ll receive a password reset link");
+    let resetLink = "";
+    await expect
+      .poll(async () => {
+        const response = await fetch(`${inbox}&kind=reset-password`);
+        if (response.ok) resetLink = ((await response.json()) as { link: string }).link;
+        return Boolean(resetLink);
+      })
+      .toBe(true);
+    await page.goto(resetLink);
+    const newPassword = "Local-only-replacement-password-536!";
+    await page.getByLabel("Password", { exact: true }).fill(newPassword);
+    await page.getByRole("button", { name: "Set a new password", exact: true }).click();
+    await expect(page.getByRole("status")).toContainText("Password updated");
+    await page.getByLabel("Email").fill(email);
+    await page.getByLabel("Password", { exact: true }).fill(password);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "Invalid email or password" })).toBeVisible();
+    await page.getByLabel("Password", { exact: true }).fill(newPassword);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(page.getByRole("heading", { name: "My profile", exact: true })).toBeVisible();
     expect(pageErrors).toEqual([]);

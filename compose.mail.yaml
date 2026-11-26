@@ -1,0 +1,49 @@
+services:
+  web:
+    environment:
+      SMTP_URL: smtp://mailer:25
+      MAIL_FROM: "BioTrades X <no-reply@${MAIL_DOMAIN:?Set MAIL_DOMAIN for direct outbound mail}>"
+    networks:
+      - default
+      - mail-submission
+    depends_on:
+      mailer:
+        condition: service_healthy
+
+  worker:
+    environment:
+      SMTP_URL: smtp://mailer:25
+      MAIL_FROM: "BioTrades X <no-reply@${MAIL_DOMAIN:?Set MAIL_DOMAIN for direct outbound mail}>"
+    networks:
+      - default
+      - mail-submission
+    depends_on:
+      mailer:
+        condition: service_healthy
+
+  mailer:
+    build: ./docker/mail
+    environment:
+      MAIL_DOMAIN: ${MAIL_DOMAIN:?Set MAIL_DOMAIN for direct outbound mail}
+      MAIL_HOSTNAME: ${MAIL_HOSTNAME:-}
+      MAIL_DKIM_SELECTOR: ${MAIL_DKIM_SELECTOR:-biotrades}
+      MAIL_SUBMISSION_SUBNET: ${MAIL_SUBMISSION_SUBNET:-172.31.95.0/28}
+    networks:
+      - mail-submission
+      - mail-delivery
+    volumes:
+      - outbound-mail-queue:/var/spool/postfix
+      - outbound-mail-keys:/var/lib/biotrades-dkim
+    restart: unless-stopped
+
+networks:
+  mail-submission:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${MAIL_SUBMISSION_SUBNET:-172.31.95.0/28}
+  mail-delivery: {}
+
+volumes:
+  outbound-mail-queue:
+  outbound-mail-keys:

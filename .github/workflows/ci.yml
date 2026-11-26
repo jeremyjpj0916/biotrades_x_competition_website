@@ -6,6 +6,11 @@ on:
 permissions:
   contents: read
 jobs:
+  direct-email:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sh tests/support/direct-mail.sh
   verify:
     runs-on: ubuntu-latest
     services:
