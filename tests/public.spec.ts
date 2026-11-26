@@ -1,13 +1,7 @@
 import { test, expect } from "@playwright/test";
+import { useTurnstileFixture } from "./support/turnstile";
 test("opens season pages, joins and switches color theme", async ({ page, isMobile }) => {
-  if (process.env.CI) {
-    await page.route("https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit", (route) =>
-      route.fulfill({
-        contentType: "application/javascript",
-        body: `window.turnstile={render(host,options){host.textContent="Test verification";queueMicrotask(()=>options.callback("browser-fixture-token"));return "test-widget"},remove(){},reset(){}};`,
-      }),
-    );
-  }
+  await useTurnstileFixture(page);
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "One pick. One trading year." })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Season timeline" })).toBeVisible();

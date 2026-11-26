@@ -51,9 +51,7 @@ export function SeriesChart({
                     cy={y(Number(value))}
                     r={points.length > 100 ? 1 : 2}
                   >
-                    <title>
-                      {label}, {point.date}, {valueLabel(value)}
-                    </title>
+                    <title>{`${label}, ${point.date}, ${valueLabel(value)}`}</title>
                   </circle>
                 );
               })}
@@ -98,8 +96,14 @@ export function SeriesChart({
     </figure>
   );
 }
-export function Bars({ data }: { data: { label: string; value: number; text: string; kind?: string }[] }) {
-  const max = Math.max(1, ...data.map(({ value }) => Math.abs(value)));
+export function Bars({
+  data,
+  maximum,
+}: {
+  data: { label: string; value: number; text: string; kind?: string }[];
+  maximum?: number;
+}) {
+  const max = Math.max(1, maximum ?? Math.max(...data.map(({ value }) => Math.abs(value))));
   return (
     <ul className="chart-list">
       {data.map(({ label, value, text, kind }) => (

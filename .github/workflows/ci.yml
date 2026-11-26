@@ -39,5 +39,5 @@ jobs:
       - run: npm run db:seed
       - run: TEST_DATABASE_URL="$DATABASE_URL" npm test
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
+      - run: PLAYWRIGHT_DATABASE_URL="$DATABASE_URL" npm run test:e2e
       - run: npm run build

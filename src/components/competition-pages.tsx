@@ -198,7 +198,7 @@ export async function Leaderboard({ season, search }: { season: Season; search: 
             <input
               name="q"
               defaultValue={options.search}
-              placeholder="Participant, ticker or company"
+              placeholder="Name, ticker, company"
               maxLength={60}
             />
           </label>
@@ -338,6 +338,7 @@ export async function Analytics({ season }: { season: Season }) {
               <h2>Participant performance</h2>
               <p className="muted">Share of all entries</p>
               <Bars
+                maximum={stats.participants}
                 data={[
                   {
                     label: "Profitable",
@@ -446,6 +447,7 @@ export async function Analytics({ season }: { season: Season }) {
               <p className="muted">Share of participants</p>
               {stocks.length ? (
                 <Bars
+                  maximum={stats.participants}
                   data={stocks.slice(0, 8).map((stock) => ({
                     label: stock.symbol,
                     value: stock.picks,
