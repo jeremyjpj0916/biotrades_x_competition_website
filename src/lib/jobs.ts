@@ -15,6 +15,7 @@ import { ensureBenchmarks, refreshSecurities } from "./securities";
 import { finalizeSeason, rebuildStandings, seasonUniverse } from "./standings";
 import { sendMail } from "./mail";
 import { appUrl } from "./config";
+import { yahooBatchSize, yahooQuotes, yahooSessionBar, yahooSource } from "./yahoo";
 
 type Job = { id: string; year: number; date: string; attempts: number };
 type Target = {
@@ -23,6 +24,7 @@ type Target = {
   market_history_id: string | null;
   benchmark: boolean;
   identity_conflict: boolean;
+  has_price: boolean;
 };
 
 export async function review(
@@ -105,14 +107,39 @@ async function claimJob() {
       AND m.closes_at<=now() ORDER BY j.session_date,j.year LIMIT 1)
     RETURNING id,year,session_date::text AS date,attempts`);
 }
-async function getTargets(season: Season, date: string, ids: string[]) {
+async function getTargets(date: string, ids: string[]) {
   return query<Target>(
     `SELECT s.id,coalesce(h.symbol,s.symbol) AS symbol,s.market_history_id,s.benchmark,
-      (h.symbol IS NULL OR EXISTS(SELECT 1 FROM securities owner WHERE owner.active AND owner.symbol=h.symbol AND owner.id<>s.id)) AS identity_conflict
+      (h.symbol IS NULL OR EXISTS(SELECT 1 FROM securities owner WHERE owner.active AND owner.symbol=h.symbol AND owner.id<>s.id)) AS identity_conflict,
+      EXISTS(SELECT 1 FROM daily_prices d WHERE d.security_id=s.id AND d.session_date=$2) AS has_price
     FROM securities s LEFT JOIN security_symbols h ON h.security_id=s.id AND daterange(valid_from,valid_until,'[)') @> $2::date
     WHERE s.id=ANY($1::uuid[]) ORDER BY s.benchmark,s.symbol`,
     [ids, date],
   );
+}
+
+async function fillYahooBars(job: Job, targets: Target[]) {
+  const missing = targets.filter((target) => !target.has_price && !target.identity_conflict);
+  if (!missing.length) return;
+  const session = await one<{ opens_at: Date; closes_at: Date }>(
+    `SELECT opens_at,closes_at FROM market_sessions m WHERE m.year=$1 AND m.session_date=$2
+    AND m.closes_at + interval '30 minutes' <= clock_timestamp()
+    AND NOT EXISTS (SELECT 1 FROM market_sessions later WHERE later.year=m.year
+      AND later.session_date>m.session_date AND later.opens_at<=clock_timestamp())`,
+    [job.year, job.date],
+  );
+  if (!session) return;
+  for (let offset = 0; offset < missing.length; offset += yahooBatchSize) {
+    const batch = missing.slice(offset, offset + yahooBatchSize);
+    const quotes = await yahooQuotes(batch.map(({ symbol }) => symbol));
+    for (const target of batch) {
+      const bar = yahooSessionBar(quotes.get(target.symbol), job.date, session);
+      if (bar) {
+        await savePrice(target.id, target.symbol, bar, yahooSource);
+        target.has_price = true;
+      }
+    }
+  }
 }
 
 async function fillFreeBars(season: Season, date: string, target: Target) {
@@ -209,13 +236,9 @@ async function checkFreeActions(season: Season, target: Target, date: string) {
     [target.id, target.symbol, date],
   );
 }
-async function syncTarget(season: Season, job: Job, target: Target) {
-  const known = await one("SELECT 1 FROM daily_prices WHERE security_id=$1 AND session_date=$2", [
-    target.id,
-    job.date,
-  ]);
+async function syncTarget(season: Season, job: Job, target: Target, yahooError?: Error) {
   if (target.identity_conflict) {
-    if (!known)
+    if (!target.has_price)
       await review(
         job.year,
         target.id,
@@ -225,12 +248,12 @@ async function syncTarget(season: Season, job: Job, target: Target) {
       );
     return;
   }
-  if (!known) {
+  if (!target.has_price) {
     if (season.data_mode === "free") await fillFreeBars(season, job.date, target);
     else {
-      if (!process.env.MASSIVE_API_KEY || process.env.MASSIVE_PUBLIC_DISPLAY_APPROVED !== "true") return;
       const bar = await officialBar(target.symbol, job.date);
       if (bar) await savePrice(target.id, target.symbol, bar, officialSource);
+      else if (yahooError) throw yahooError;
     }
   }
   await checkFreeActions(season, target, job.date);
@@ -273,13 +296,21 @@ async function processJob(job: Job) {
   }
   const universe = await seasonUniverse(season);
   const targets = universe.entries.some((entry) => !entry.disqualified_reason)
-    ? await getTargets(season, job.date, universe.allIds)
+    ? await getTargets(job.date, universe.allIds)
     : [];
+  let yahooError: Error | undefined;
+  if (season.data_mode === "official" && process.env.YAHOO_FINANCE_PUBLIC_DISPLAY_APPROVED === "true") {
+    try {
+      await fillYahooBars(job, targets);
+    } catch (error) {
+      yahooError = error instanceof Error ? error : new Error("Yahoo Finance synchronization failed");
+    }
+  }
   let providerWait = 0;
   const failures: string[] = [];
   for (const target of targets) {
     try {
-      await syncTarget(season, job, target);
+      await syncTarget(season, job, target, yahooError);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Provider request failed";
       failures.push(`${target.symbol}: ${message.slice(0, 180)}`);

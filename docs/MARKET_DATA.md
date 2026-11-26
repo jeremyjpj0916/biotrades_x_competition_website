@@ -12,7 +12,22 @@ A Market History key is optional for a corporate-action feed. Without one, the w
 
 ## Official prices
 
-Set `MARKET_DATA_MODE=official` before the next season opens if an authorized source can provide regular-session opening and closing prices. Change the setting before the seed or weekly calendar renewal creates the season. The market mode is fixed when entries open. The Massive integration uses its unadjusted daily open/close and split endpoints. Set `MASSIVE_PUBLIC_DISPLAY_APPROVED=true` only after confirming the agreement covers your public website, analytics and exports. Massive's individual terms limit redistribution. [Massive daily summary](https://massive.com/docs/rest/stocks/aggregates/daily-ticker-summary) · [Massive data terms](https://massive.com/terms/market_data_terms.pdf)
+Set `MARKET_DATA_MODE=official` and run `npm run db:seed` before registration opens if an authorized source can provide regular-session opening and closing prices. The market mode is fixed when entries open. The Massive integration uses its unadjusted daily open/close and split endpoints. Set `MASSIVE_PUBLIC_DISPLAY_APPROVED=true` only after confirming the agreement covers your public website, analytics and exports. Massive's individual terms limit redistribution. [Massive daily summary](https://massive.com/docs/rest/stocks/aggregates/daily-ticker-summary) · [Massive data terms](https://massive.com/terms/market_data_terms.pdf)
+
+### Yahoo Finance
+
+The worker supports the Yahoo Finance batch-quote endpoint used by `stock-market-alerts`. Configure the matching `Cookie` header value and `crumb` query value from your authorized Yahoo Finance session in the worker environment. These are session credentials. The referenced project's deprecated `yahoo_api_key` option is ignored. Keep credentials in `.env.local` for a local process, `.env` for Compose, or your host's secret store. [Stock market alerts quote client](https://github.com/jeremyjpj0916/stock-market-alerts/blob/7c0798de3532334cca2dfba113fe661830450c6c/main.py#L50-L97) · [Yahoo terms](https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html)
+
+```dotenv
+YAHOO_FINANCE_COOKIE='COOKIE_NAME=replace-with-session-value'
+YAHOO_FINANCE_CRUMB='replace-with-matching-crumb'
+YAHOO_FINANCE_PUBLIC_DISPLAY_APPROVED=false
+YAHOO_FINANCE_REQUESTS_PER_MINUTE=5
+```
+
+With the database migrated, run `npm run data:check-yahoo` to test authentication against one quote. For Compose, run `docker compose run --rm worker npm run data:check-yahoo` with the same Compose files as your deployment. The check works with public display disabled and prints only its result. On HTTP 401 or 403, update both session values and restart the worker. In Compose, use `docker compose up -d --force-recreate worker` with the same Compose files to reload `.env`.
+
+Set `YAHOO_FINANCE_PUBLIC_DISPLAY_APPROVED=true` after confirming your authorization covers the site's public display and exports. In official seasons the worker batches missing symbols for the latest completed session, beginning at least 30 minutes after the exchange close. It uses the regular open and final regular quote for that session, including early closes. It respects the shared PostgreSQL request budget and `Retry-After`. If Yahoo is unavailable or lacks a usable quote, configured Massive or a verified import can fill the gap. Earlier sessions require one of those sources. Verify corporate actions through the existing provider or review workflow. [Yahoo Finance data sources and delays](https://help.yahoo.com/kb/finance/article-exchanges-data-delays-sln2310.html)
 
 A verified source can also be imported without adding an API adapter. The operator must have permission to use and publish the output appropriate to that season. Each input declares its provenance.
 

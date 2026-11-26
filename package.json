@@ -19,6 +19,7 @@
     "worker": "tsx scripts/worker.ts",
     "worker:once": "tsx scripts/worker.ts --once",
     "data:import": "tsx scripts/import.ts",
+    "data:check-yahoo": "tsx scripts/check-yahoo.ts",
     "format:check": "prettier --check src scripts tests next.config.ts playwright.config.ts",
     "format": "prettier --write src scripts tests next.config.ts playwright.config.ts"
   },
