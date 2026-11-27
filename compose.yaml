@@ -1,0 +1,89 @@
+x-runtime: &runtime
+  env_file: .env
+  environment:
+    DATABASE_URL: ${CONTAINER_DATABASE_URL:-postgresql://biotrades:biotrades@db:5432/biotrades}
+    NEXT_TELEMETRY_DISABLED: "1"
+    NODE_ENV: production
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: biotrades
+      POSTGRES_USER: biotrades
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-biotrades}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U biotrades -d biotrades"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+
+  migrate:
+    <<: *runtime
+    build:
+      context: .
+      target: worker
+    command: ["sh", "-c", "npm run db:migrate && npm run db:seed"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    <<: *runtime
+    build:
+      context: .
+      target: worker
+    command: ["npm","run","worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    stop_grace_period: 45s
+
+  web:
+    <<: *runtime
+    build:
+      context: .
+      target: web
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports: ["127.0.0.1:3000:3000"]
+    restart: unless-stopped
+
+  caddy:
+    profiles: ["https"]
+    image: caddy:2-alpine
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+    ports: ["80:80","443:443","443:443/udp"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [web]
+    restart: unless-stopped
+
+  backup:
+    image: postgres:17-alpine
+    environment:
+      PGHOST: db
+      PGDATABASE: biotrades
+      PGUSER: biotrades
+      PGPASSWORD: ${POSTGRES_PASSWORD:-biotrades}
+    volumes:
+      - ./backups:/backups
+      - ./scripts/backup.sh:/usr/local/bin/biotrades-backup:ro
+    command: ["sh","/usr/local/bin/biotrades-backup"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pg-data:
+  caddy-data:
+  caddy-config:
