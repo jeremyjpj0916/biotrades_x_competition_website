@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { one, query } from "../src/lib/db";
-import { yahooQuotes, yahooSessionBar } from "../src/lib/yahoo";
+import {
+  yahooChartBar,
+  yahooDailyChart,
+  yahooQuotes,
+  yahooSessionBar,
+  yahooSessionConfigured,
+} from "../src/lib/yahoo";
 
 vi.mock("../src/lib/db", () => ({ one: vi.fn(), query: vi.fn() }));
 
@@ -33,6 +39,57 @@ afterEach(() => {
   vi.resetAllMocks();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+});
+
+describe("Yahoo Finance public daily chart", () => {
+  const opening = session.opens_at.valueOf() / 1000;
+  const chart: NonNullable<Awaited<ReturnType<typeof yahooDailyChart>>> = {
+    meta: {
+      symbol: "XBI",
+      currency: "USD",
+      exchangeTimezoneName: "America/New_York",
+      dataGranularity: "1d",
+      regularMarketTime: completedQuote.regularMarketTime,
+      regularMarketPrice: 95,
+    },
+    timestamp: [opening - 172800, opening],
+    indicators: { quote: [{ open: [89, 90], close: [93, 95.000005] }] },
+  };
+
+  it("fetches a daily candle without credentials and checks its close against the regular quote", async () => {
+    vi.stubEnv("YAHOO_FINANCE_COOKIE", "");
+    vi.stubEnv("YAHOO_FINANCE_CRUMB", "");
+    fetchQuote.mockResolvedValueOnce(Response.json({ chart: { error: null, result: [chart] } }));
+    expect(yahooSessionConfigured()).toBe(false);
+    const result = await yahooDailyChart("XBI");
+    const [input, options] = fetchQuote.mock.calls[0];
+    const url = new URL(String(input));
+    expect(url.pathname).toBe("/v8/finance/chart/XBI");
+    expect(url.searchParams.get("includePrePost")).toBe("false");
+    expect(url.searchParams.get("events")).toBe("splits");
+    expect(url.searchParams.has("crumb")).toBe(false);
+    expect(new Headers(options?.headers).has("cookie")).toBe(false);
+    expect(one).toHaveBeenCalledWith(expect.any(String), ["yahoo_finance", 30000]);
+    expect(yahooChartBar(result, date, session)).toEqual({ date, open: 90, close: 95 });
+  });
+
+  it("rejects stale charts, mismatched closing prices, and candles restated for later splits", () => {
+    expect(yahooChartBar({ ...chart, timestamp: [opening - 172800] }, date, session)).toBeUndefined();
+    expect(yahooChartBar({ ...chart, timestamp: [opening] }, date, session)).toBeUndefined();
+    expect(
+      yahooChartBar(
+        { ...chart, meta: { ...chart.meta, regularMarketTime: opening - 172800 } },
+        date,
+        session,
+      ),
+    ).toBeUndefined();
+    expect(
+      yahooChartBar({ ...chart, meta: { ...chart.meta, regularMarketPrice: 190 } }, date, session),
+    ).toBeUndefined();
+    expect(
+      yahooChartBar({ ...chart, events: { splits: { next: { date: opening + 86400 } } } }, date, session),
+    ).toBeUndefined();
+  });
 });
 
 describe("Yahoo Finance session quotes", () => {

@@ -16,18 +16,18 @@ Set `MARKET_DATA_MODE=official` and run `npm run db:seed` before registration op
 
 ### Yahoo Finance
 
-The worker supports the Yahoo Finance batch-quote endpoint used by `stock-market-alerts`. Configure the matching `Cookie` header value and `crumb` query value from your authorized Yahoo Finance session in the worker environment. These are session credentials. The referenced project's deprecated `yahoo_api_key` option is ignored. Keep credentials in `.env.local` for a local process, `.env` for Compose, or your host's secret store. [Stock market alerts quote client](https://github.com/jeremyjpj0916/stock-market-alerts/blob/7c0798de3532334cca2dfba113fe661830450c6c/main.py#L50-L97) · [Yahoo terms](https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html)
+Leave both Yahoo credentials empty to use its public daily chart endpoint. The worker makes one request per missing symbol. For batch quotes, configure the matching `Cookie` header and `crumb` query values from your authorized Yahoo Finance session. Keep them in `.env.local` for a local process, `.env` for Compose, or your host's secret store. `yahooquery`, used by `stock-market-alerts`, sets up a session and obtains a crumb internally for its quote requests. [Yahooquery session handling](https://github.com/dpguthrie/yahooquery/blob/master/yahooquery/session_management.py) · [Yahoo terms](https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html)
 
 ```dotenv
-YAHOO_FINANCE_COOKIE='COOKIE_NAME=replace-with-session-value'
-YAHOO_FINANCE_CRUMB='replace-with-matching-crumb'
+YAHOO_FINANCE_COOKIE=
+YAHOO_FINANCE_CRUMB=
 YAHOO_FINANCE_PUBLIC_DISPLAY_APPROVED=false
 YAHOO_FINANCE_REQUESTS_PER_MINUTE=5
 ```
 
-With the database migrated, run `npm run data:check-yahoo` to test authentication against one quote. For Compose, run `docker compose run --rm worker npm run data:check-yahoo` with the same Compose files as your deployment. The check works with public display disabled and prints only its result. On HTTP 401 or 403, update both session values and restart the worker. In Compose, use `docker compose up -d --force-recreate worker` with the same Compose files to reload `.env`.
+With the database migrated, run `npm run data:check-yahoo` to test the configured path against SPY. For Compose, run `docker compose run --rm worker npm run data:check-yahoo` with the same Compose files as your deployment. The check works with public display disabled and prints only its result. If an authenticated batch request returns HTTP 401 or 403, refresh the pair or clear both values to switch to the chart. In Compose, use `docker compose up -d --force-recreate worker` with the same Compose files to reload `.env`.
 
-Set `YAHOO_FINANCE_PUBLIC_DISPLAY_APPROVED=true` after confirming your authorization covers the site's public display and exports. In official seasons the worker batches missing symbols for the latest completed session, beginning at least 30 minutes after the exchange close. It uses the regular open and final regular quote for that session, including early closes. It respects the shared PostgreSQL request budget and `Retry-After`. If Yahoo is unavailable or lacks a usable quote, configured Massive or a verified import can fill the gap. Earlier sessions require one of those sources. Verify corporate actions through the existing provider or review workflow. [Yahoo Finance data sources and delays](https://help.yahoo.com/kb/finance/article-exchanges-data-delays-sln2310.html)
+Set `YAHOO_FINANCE_PUBLIC_DISPLAY_APPROVED=true` after confirming your authorization covers the site's public display and exports. In official seasons the worker checks missing symbols for the latest completed session, beginning at least 30 minutes after the exchange close. The chart must match the exchange calendar open and current regular quote. The worker skips chart bars that precede a later reported split, since Yahoo can revise earlier chart prices for splits. Both paths share the PostgreSQL request budget and honor `Retry-After`. Configured Massive or a verified import can fill earlier sessions and Yahoo gaps. Verify corporate actions through the existing provider or review workflow. [Yahoo Finance data sources and delays](https://help.yahoo.com/kb/finance/article-exchanges-data-delays-sln2310.html)
 
 A verified source can also be imported without adding an API adapter. The operator must have permission to use and publish the output appropriate to that season. Each input declares its provenance.
 

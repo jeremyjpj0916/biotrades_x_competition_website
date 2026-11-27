@@ -15,7 +15,16 @@ import { ensureBenchmarks, refreshSecurities } from "./securities";
 import { finalizeSeason, rebuildStandings, seasonUniverse } from "./standings";
 import { sendMail } from "./mail";
 import { appUrl } from "./config";
-import { yahooBatchSize, yahooQuotes, yahooSessionBar, yahooSource } from "./yahoo";
+import {
+  yahooBatchSize,
+  yahooChartBar,
+  yahooChartSource,
+  yahooDailyChart,
+  yahooQuotes,
+  yahooSessionBar,
+  yahooSessionConfigured,
+  yahooSource,
+} from "./yahoo";
 
 type Job = { id: string; year: number; date: string; attempts: number };
 type Target = {
@@ -118,6 +127,10 @@ async function getTargets(date: string, ids: string[]) {
   );
 }
 
+function providerBackoff(error: unknown): error is ProviderError {
+  return error instanceof ProviderError && [401, 403, 429, 503].includes(error.status);
+}
+
 async function fillYahooBars(job: Job, targets: Target[]) {
   const missing = targets.filter((target) => !target.has_price && !target.identity_conflict);
   if (!missing.length) return;
@@ -129,6 +142,25 @@ async function fillYahooBars(job: Job, targets: Target[]) {
     [job.year, job.date],
   );
   if (!session) return;
+
+  if (!yahooSessionConfigured()) {
+    let firstError: Error | undefined;
+    for (const target of missing) {
+      try {
+        const bar = yahooChartBar(await yahooDailyChart(target.symbol), job.date, session);
+        if (bar) {
+          await savePrice(target.id, target.symbol, bar, yahooChartSource);
+          target.has_price = true;
+        }
+      } catch (error) {
+        if (providerBackoff(error)) throw error;
+        firstError ??= error instanceof Error ? error : new Error("Yahoo Finance synchronization failed");
+      }
+    }
+    if (firstError) throw firstError;
+    return;
+  }
+
   for (let offset = 0; offset < missing.length; offset += yahooBatchSize) {
     const batch = missing.slice(offset, offset + yahooBatchSize);
     const quotes = await yahooQuotes(batch.map(({ symbol }) => symbol));
@@ -314,7 +346,7 @@ async function processJob(job: Job) {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Provider request failed";
       failures.push(`${target.symbol}: ${message.slice(0, 180)}`);
-      if (error instanceof ProviderError && [401, 403, 429, 503].includes(error.status)) {
+      if (providerBackoff(error)) {
         providerWait = error.wait || 60;
         break;
       }
