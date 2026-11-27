@@ -1,7 +1,6 @@
 import { apiError, HttpError, privateJson, rateLimit } from "@/lib/http";
-import { searchSecurities } from "@/lib/securities";
+import { getPickerPrices, searchSecurities } from "@/lib/securities";
 import { session } from "@/lib/session";
-import { one } from "@/lib/db";
 
 export async function GET(request: Request) {
   try {
@@ -11,20 +10,7 @@ export async function GET(request: Request) {
     const value = new URL(request.url).searchParams.get("q")?.trim() ?? "";
     if (!value || value.length > 60) return privateJson({ securities: [] });
     const securities = await searchSecurities(value);
-    const allowPrices = await one<{
-      approved: boolean;
-    }>(`SELECT EXISTS(SELECT 1 FROM seasons WHERE data_mode='official'
-      AND registration_at<=now() AND locks_at>now()) AS approved`);
-    const prices =
-      allowPrices.approved && securities.length
-        ? await (
-            await import("@/lib/db")
-          ).query<{ id: string; price: string }>(
-            `SELECT DISTINCT ON (security_id) security_id AS id, close AS price FROM daily_prices
-          WHERE security_id=ANY($1::uuid[]) AND source NOT LIKE 'Market History%' ORDER BY security_id,session_date DESC`,
-            [securities.map(({ id }) => id)],
-          )
-        : [];
+    const prices = await getPickerPrices(securities.map(({ id }) => id));
     const priceById = new Map(prices.map(({ id, price }) => [id, price]));
     return privateJson({
       securities: securities.map((stock) => ({ ...stock, price: priceById.get(stock.id) ?? null })),

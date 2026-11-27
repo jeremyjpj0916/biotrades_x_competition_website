@@ -1,7 +1,8 @@
 import { DateTime } from "luxon";
-import { one, query, transaction } from "./db";
+import { one, query, transaction, type Database } from "./db";
 import { zone } from "./calendar";
-import { providerFetch } from "./market";
+import { officialSource, providerFetch } from "./market";
+import { yahooChartSource, yahooSource } from "./yahoo";
 
 const secExchanges: Record<string, string> = {
   Nasdaq: "XNAS",
@@ -277,5 +278,23 @@ export async function searchSecurities(value: string) {
      WHERE NOT benchmark AND (symbol ILIKE $1 OR name ILIKE $2)
      ORDER BY (upper(symbol)=upper($3)) DESC, active DESC, provider_eligible DESC, symbol LIMIT 15`,
     [`${term}%`, `%${term}%`, value],
+  );
+}
+
+/** Return picker prices only during official registration and only from approved sources. */
+export async function getPickerPrices(ids: string[], db?: Database) {
+  if (!ids.length) return [];
+  const approvedSources: string[] = [];
+  if (process.env.MASSIVE_PUBLIC_DISPLAY_APPROVED === "true") approvedSources.push(officialSource);
+  if (process.env.YAHOO_FINANCE_PUBLIC_DISPLAY_APPROVED === "true")
+    approvedSources.push(yahooSource, yahooChartSource);
+  return query<{ id: string; price: string }>(
+    `SELECT DISTINCT ON (security_id) security_id AS id, close AS price FROM daily_prices
+    WHERE security_id=ANY($1::uuid[]) AND (source LIKE 'Verified %' OR source=ANY($2::text[]))
+      AND EXISTS (SELECT 1 FROM seasons WHERE data_mode='official'
+        AND registration_at<=now() AND locks_at>now())
+    ORDER BY security_id,session_date DESC`,
+    [ids, approvedSources],
+    db,
   );
 }

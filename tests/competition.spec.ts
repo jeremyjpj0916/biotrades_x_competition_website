@@ -213,6 +213,8 @@ test("registers, manages a private stock pick, publishes accurate competition ta
     await expect(page.getByRole("link", { name: username, exact: true })).toBeVisible();
     await page.goto(`/users/${username}`);
     await expect(page.getByRole("heading", { name: "Current competition" })).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "Opening price", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("columnheader", { name: "Final value", exact: true })).toHaveCount(0);
     await expect(page.getByText("Trophies appear after final results are published.")).toBeVisible();
 
     await query("UPDATE seasons SET ends_at=locks_at+interval '1 second' WHERE year=$1", [year]);

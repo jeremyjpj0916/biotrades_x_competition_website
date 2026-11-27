@@ -311,3 +311,9 @@ export function selectEntrySeason(seasons: Season[], overview?: Season) {
     overview
   );
 }
+
+export function selectRulesSeason(seasons: Season[], current?: number) {
+  const home = selectHomeSeason(seasons, current);
+  const entry = selectEntrySeason(seasons, home);
+  return entry?.phase === "Registration open" ? entry : home;
+}

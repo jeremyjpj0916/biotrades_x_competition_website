@@ -5,6 +5,7 @@ import {
   publishedCalendar,
   selectEntrySeason,
   selectHomeSeason,
+  selectRulesSeason,
   type Season,
 } from "../src/lib/calendar";
 describe("exchange calendar and annual selection", () => {
@@ -42,5 +43,7 @@ describe("exchange calendar and annual selection", () => {
     expect(selectHomeSeason([next, current], 2027)?.year).toBe(2027);
     expect(selectEntrySeason([next, current], current)?.year).toBe(2028);
     expect(selectHomeSeason([next, current], 2028)?.year).toBe(2028);
+    expect(selectRulesSeason([next, current], 2027)?.year).toBe(2028);
+    expect(selectRulesSeason([{ ...next, phase: "Upcoming" }, current], 2027)?.year).toBe(2027);
   });
 });

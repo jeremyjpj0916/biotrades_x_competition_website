@@ -40,6 +40,15 @@ export default async function UserPage({ params }: { params: Promise<{ username:
       rank: String(standing.rank),
     }));
   const current = seasons.find(({ season }) => !season.final_revision);
+  const showPrices = seasons.some(({ season, standing }) => standing && season.data_mode === "official");
+  const headings = [
+    "Year",
+    "Pick",
+    ...(showPrices ? ["Opening price", "Final value"] : []),
+    "Return",
+    "Rank",
+    "Participants",
+  ];
   return (
     <div className="page">
       <div className="profile-hero">
@@ -112,11 +121,9 @@ export default async function UserPage({ params }: { params: Promise<{ username:
             <table className="data-table">
               <thead>
                 <tr>
-                  {["Year", "Pick", "Opening price", "Final value", "Return", "Rank", "Participants"].map(
-                    (name) => (
-                      <th key={name}>{name}</th>
-                    ),
-                  )}
+                  {headings.map((name) => (
+                    <th key={name}>{name}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -138,8 +145,16 @@ export default async function UserPage({ params }: { params: Promise<{ username:
                             {standing.symbol}
                           </Link>
                         </td>
-                        <td>{money(standing.startPrice)}</td>
-                        <td>{season.final_revision ? money(standing.value) : "—"}</td>
+                        {showPrices && (
+                          <>
+                            <td>{season.data_mode === "official" ? money(standing.startPrice) : "—"}</td>
+                            <td>
+                              {season.data_mode === "official" && season.final_revision
+                                ? money(standing.value)
+                                : "—"}
+                            </td>
+                          </>
+                        )}
                         <td className={returnClass(standing.returnPct)}>{percent(standing.returnPct)}</td>
                         <td>{standing.rank ?? "—"}</td>
                         <td>{participants}</td>
