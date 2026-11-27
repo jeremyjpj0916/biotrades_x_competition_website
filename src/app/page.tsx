@@ -12,11 +12,12 @@ import {
   UsersRound,
 } from "lucide-react";
 import { Countdown } from "@/components/countdown";
+import { MarketRefresh } from "@/components/market-refresh";
 import { Empty, PageHeading, Phase, SeasonTimeline, StandingsTable, Value } from "@/components/ui";
 import { fallbackSeason, listSeasons, selectHomeSeason, selectEntrySeason } from "@/lib/calendar";
 import { firstYear } from "@/lib/config";
 import { dateLabel, percent, returnClass } from "@/lib/format";
-import { getBoard, getOverview, getRecentChampions } from "@/lib/public-data";
+import { getBoard, getOverview, getRecentChampions, marketPublication, revealed } from "@/lib/public-data";
 
 export default async function Home() {
   const seasons = await listSeasons().catch(() => []);
@@ -52,6 +53,9 @@ export default async function Home() {
   ];
   return (
     <div className="home">
+      {seasons.length > 0 && revealed(season) && season.phase !== "Completed" && (
+        <MarketRefresh year={season.year} publication={marketPublication(season)} />
+      )}
       <section className="hero" aria-labelledby="home-title">
         <div className="hero-art" />
         <div className="hero-inner">

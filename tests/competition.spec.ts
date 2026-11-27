@@ -123,6 +123,9 @@ test("registers, manages a private stock pick, publishes accurate competition ta
     await page.goto(`${seasonUrl}/leaderboard`);
     await expect(page.getByRole("heading", { name: "Picks are still private" })).toBeVisible();
     expect((await page.request.get(`/api/leaderboard/export?year=${year}`)).status()).toBe(404);
+    expect(await (await page.request.get(`/api/market-publication?year=${year}`)).json()).toEqual({
+      publication: null,
+    });
 
     await query(
       "UPDATE seasons SET locks_at=now()-interval '1 hour',ends_at=now()+interval '1 hour' WHERE year=$1",
@@ -214,7 +217,11 @@ test("registers, manages a private stock pick, publishes accurate competition ta
 
     await query("UPDATE seasons SET ends_at=locks_at+interval '1 second' WHERE year=$1", [year]);
     expect(await finalizeSeason(year)).toBeNull();
+    await page.goto(`${seasonUrl}/leaderboard`);
+    await expect(page.getByText("closing price pending", { exact: true })).toBeVisible();
     await writePrice(pending, finalDay, 11);
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await expect(page.getByText("closing price pending", { exact: true })).toBeVisible();
     await query("UPDATE sync_jobs SET status='succeeded' WHERE year=$1", [year]);
     await runAdmin("playwright-fixture", {
       action: "verify-action-coverage",
@@ -222,7 +229,18 @@ test("registers, manages a private stock pick, publishes accurate competition ta
       reason: "Deterministic simulated market and corporate actions",
     });
     expect(await finalizeSeason(year)).toEqual({ revision: 1, ranked: 5 });
-    await page.reload();
+    await expect
+      .poll(async () => {
+        await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+        return page
+          .getByRole("row")
+          .filter({ hasText: pending.symbol })
+          .getByRole("cell", { name: "+10.00%", exact: true })
+          .first()
+          .isVisible();
+      })
+      .toBe(true);
+    await page.goto(`/users/${username}`);
     await expect(page.getByRole("link", { name: `Champion ${year} season` })).toBeVisible();
     await expect(page.getByRole("link", { name: `Elite Stock Picker ${year} season` })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Current competition" })).toHaveCount(0);

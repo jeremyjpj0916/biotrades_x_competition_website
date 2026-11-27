@@ -2,7 +2,8 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { z } from "zod";
 import { getSeason } from "@/lib/calendar";
-import { yearValue } from "@/lib/public-data";
+import { marketPublication, revealed, yearValue } from "@/lib/public-data";
+import { MarketRefresh } from "@/components/market-refresh";
 import {
   Analytics,
   CompetitionOverview,
@@ -52,5 +53,12 @@ export default async function Competition({ params, searchParams }: Route) {
         notFound();
     }
   }
-  return <div className="page">{content}</div>;
+  return (
+    <div className="page">
+      {screen !== "rules" && revealed(season) && season.phase !== "Completed" && (
+        <MarketRefresh year={season.year} publication={marketPublication(season)} />
+      )}
+      {content}
+    </div>
+  );
 }

@@ -29,6 +29,10 @@ With the database migrated, run `npm run data:check-yahoo` to test the configure
 
 Set `YAHOO_FINANCE_PUBLIC_DISPLAY_APPROVED=true` after confirming your authorization covers the site's public display and exports. In official seasons the worker checks missing symbols for the latest completed session, beginning at least 30 minutes after the exchange close. The chart must match the exchange calendar open and current regular quote. The worker skips chart bars that precede a later reported split, since Yahoo can revise earlier chart prices for splits. Both paths share the PostgreSQL request budget and honor `Retry-After`. Configured Massive or a verified import can fill earlier sessions and Yahoo gaps. Verify corporate actions through the existing provider or review workflow. [Yahoo Finance data sources and delays](https://help.yahoo.com/kb/finance/article-exchanges-data-delays-sln2310.html)
 
+Unauthenticated chart collection covers unique picked securities, their tracked successors and the benchmarks. Entries for the same security share one price. The worker saves each accepted bar as it goes, continues in groups of 25 and resumes from saved data after a restart. A missing symbol gets one attempt per pass before scheduled retries. New chart requests stop at the next exchange opening. At five requests per minute, 1,000 unique symbols take about 3 hours 20 minutes and 3,000 take about 10 hours before delays or retries. The configured rate is an application limit. Yahoo can still throttle a request or omit a symbol.
+
+The public site keeps showing the last complete publication during collection and retries. Once a session's standings and benchmarks are ready, the worker publishes them together. Open competition pages check for a new publication once per minute while visible and refresh when it changes.
+
 A verified source can also be imported without adding an API adapter. The operator must have permission to use and publish the output appropriate to that season. Each input declares its provenance.
 
 ```json

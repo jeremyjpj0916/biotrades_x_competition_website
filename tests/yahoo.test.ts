@@ -90,6 +90,12 @@ describe("Yahoo Finance public daily chart", () => {
       yahooChartBar({ ...chart, events: { splits: { next: { date: opening + 86400 } } } }, date, session),
     ).toBeUndefined();
   });
+
+  it("skips a chart request when its next rate slot falls after the exchange opening", async () => {
+    vi.mocked(one).mockResolvedValueOnce({ wait: "60000" });
+    await expect(yahooDailyChart("XBI", { before: new Date(Date.now() + 30000) })).resolves.toBeUndefined();
+    expect(fetchQuote).not.toHaveBeenCalled();
+  });
 });
 
 describe("Yahoo Finance session quotes", () => {

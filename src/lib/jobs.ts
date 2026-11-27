@@ -26,7 +26,7 @@ import {
   yahooSource,
 } from "./yahoo";
 
-type Job = { id: string; year: number; date: string; attempts: number };
+type Job = { id: string; year: number; date: string; attempts: number; started_at: Date };
 type Target = {
   id: string;
   symbol: string;
@@ -110,11 +110,13 @@ async function queueWork() {
   await query("DELETE FROM request_limits WHERE expires_at < now()-interval '1 day'");
 }
 async function claimJob() {
-  return one<Job>(`UPDATE sync_jobs SET status='running',attempts=attempts+1,started_at=now()
+  return one<Job>(`UPDATE sync_jobs SET status='running',
+    attempts=attempts+CASE WHEN status='running' AND started_at IS NOT NULL THEN 0 ELSE 1 END,
+    started_at=CASE WHEN status='running' THEN coalesce(started_at,clock_timestamp()) ELSE clock_timestamp() END
     WHERE id=(SELECT j.id FROM sync_jobs j JOIN market_sessions m USING(year,session_date)
       WHERE (j.status IN ('pending','failed') AND j.available_at<=now() OR j.status='running')
-      AND m.closes_at<=now() ORDER BY j.session_date,j.year LIMIT 1)
-    RETURNING id,year,session_date::text AS date,attempts`);
+      AND m.closes_at<=now() ORDER BY (j.status='running') DESC,j.session_date,j.year LIMIT 1)
+    RETURNING id,year,session_date::text AS date,attempts,started_at`);
 }
 async function getTargets(date: string, ids: string[]) {
   return query<Target>(
@@ -131,32 +133,55 @@ function providerBackoff(error: unknown): error is ProviderError {
   return error instanceof ProviderError && [401, 403, 429, 503].includes(error.status);
 }
 
-async function fillYahooBars(job: Job, targets: Target[]) {
+async function fillYahooBars(job: Job, targets: Target[], signal?: AbortSignal) {
   const missing = targets.filter((target) => !target.has_price && !target.identity_conflict);
   if (!missing.length) return;
-  const session = await one<{ opens_at: Date; closes_at: Date }>(
-    `SELECT opens_at,closes_at FROM market_sessions m WHERE m.year=$1 AND m.session_date=$2
+  const session = await one<{ opens_at: Date; closes_at: Date; next_open: Date | null }>(
+    `SELECT opens_at,closes_at,(SELECT min(l.opens_at) FROM market_sessions l WHERE l.session_date>m.session_date) AS next_open
+    FROM market_sessions m WHERE m.year=$1 AND m.session_date=$2
     AND m.closes_at + interval '30 minutes' <= clock_timestamp()
-    AND NOT EXISTS (SELECT 1 FROM market_sessions later WHERE later.year=m.year
-      AND later.session_date>m.session_date AND later.opens_at<=clock_timestamp())`,
+    AND NOT EXISTS (SELECT 1 FROM market_sessions later
+      WHERE later.session_date>m.session_date AND later.opens_at<=clock_timestamp())`,
     [job.year, job.date],
   );
   if (!session) return;
 
   if (!yahooSessionConfigured()) {
+    const tried = new Set(
+      (
+        await query<{ security_id: string; symbol: string }>(
+          `SELECT security_id,symbol FROM market_observations WHERE source=$1 AND observed_through=$2
+        AND checked_at >= $3::timestamptz`,
+          [yahooChartSource, job.date, job.started_at],
+        )
+      ).map(({ security_id, symbol }) => `${security_id}/${symbol}`),
+    );
+    const remaining = missing.filter(({ id, symbol }) => !tried.has(`${id}/${symbol}`));
+    const sliceSize = 25;
     let firstError: Error | undefined;
-    for (const target of missing) {
+    const window = { signal, before: session.next_open ?? undefined };
+    for (const target of remaining.slice(0, sliceSize)) {
+      if (signal?.aborted) return true;
+      if (session.next_open && Date.now() >= session.next_open.valueOf()) return;
       try {
-        const bar = yahooChartBar(await yahooDailyChart(target.symbol), job.date, session);
+        const bar = yahooChartBar(await yahooDailyChart(target.symbol, window), job.date, session);
         if (bar) {
           await savePrice(target.id, target.symbol, bar, yahooChartSource);
           target.has_price = true;
+          continue;
         }
       } catch (error) {
+        if (signal?.aborted) return true;
         if (providerBackoff(error)) throw error;
         firstError ??= error instanceof Error ? error : new Error("Yahoo Finance synchronization failed");
       }
+      await query(
+        `INSERT INTO market_observations(security_id,symbol,source,observed_through) VALUES($1,$2,$3,$4)
+        ON CONFLICT(security_id,symbol,source) DO UPDATE SET checked_at=clock_timestamp(), observed_through=excluded.observed_through`,
+        [target.id, target.symbol, yahooChartSource, job.date],
+      );
     }
+    if (remaining.length > sliceSize) return true;
     if (firstError) throw firstError;
     return;
   }
@@ -320,7 +345,7 @@ async function syncTarget(season: Season, job: Job, target: Target, yahooError?:
   }
 }
 
-async function processJob(job: Job) {
+async function processJob(job: Job, signal?: AbortSignal) {
   const season = await getSeason(job.year);
   if (!season || season.final_revision) {
     await query("UPDATE sync_jobs SET status='succeeded',finished_at=now() WHERE id=$1", [job.id]);
@@ -333,14 +358,16 @@ async function processJob(job: Job) {
   let yahooError: Error | undefined;
   if (season.data_mode === "official" && process.env.YAHOO_FINANCE_PUBLIC_DISPLAY_APPROVED === "true") {
     try {
-      await fillYahooBars(job, targets);
+      if (await fillYahooBars(job, targets, signal)) return;
     } catch (error) {
       yahooError = error instanceof Error ? error : new Error("Yahoo Finance synchronization failed");
     }
   }
+  if (signal?.aborted) return;
   let providerWait = 0;
   const failures: string[] = [];
   for (const target of targets) {
+    if (signal?.aborted) return;
     try {
       await syncTarget(season, job, target, yahooError);
     } catch (error) {
@@ -354,6 +381,7 @@ async function processJob(job: Job) {
   }
   const result = await transaction(async (db) => {
     await db.query("SELECT year FROM seasons WHERE year=$1 FOR UPDATE", [job.year]);
+    await db.query("SAVEPOINT standings_snapshot");
     const scored = await rebuildStandings(job.year, job.date, db);
     const missingBenchmarks =
       scored.count > 0 &&
@@ -365,26 +393,29 @@ async function processJob(job: Job) {
     if (scored.unresolved || missingBenchmarks || failures.length) {
       const detail =
         failures[0] ?? `${scored.unresolved} entries and/or benchmarks awaiting market data or review`;
-      if (job.attempts >= 4) {
+      const gaps =
+        job.attempts >= 4
+          ? await query<{ security_id: string }>(
+              `SELECT DISTINCT e.security_id FROM entries e JOIN daily_standings d ON d.entry_id=e.id AND d.session_date=$2
+        WHERE e.season_year=$1 AND d.return_pct IS NULL AND e.disqualified_reason IS NULL
+        AND d.status IN ('opening price pending','closing price pending')`,
+              [job.year, job.date],
+              db,
+            )
+          : [];
+      await db.query("ROLLBACK TO SAVEPOINT standings_snapshot");
+      if (gaps.length) {
         await db.query(
           `INSERT INTO security_reviews(year,security_id,category,message)
-          SELECT DISTINCT $1,e.security_id,'gap:'||$2::text,'No verified value for '||$2::text
-          FROM entries e JOIN daily_standings d ON d.entry_id=e.id AND d.session_date=$2
-          WHERE e.season_year=$1 AND d.return_pct IS NULL AND e.disqualified_reason IS NULL
-          AND d.status IN ('opening price pending','closing price pending') ON CONFLICT DO NOTHING`,
-          [job.year, job.date],
+          SELECT $1,id,'gap:'||$2::text,'No verified value for '||$2::text FROM unnest($3::uuid[]) AS ids(id)
+          ON CONFLICT DO NOTHING`,
+          [job.year, job.date, gaps.map(({ security_id }) => security_id)],
         );
       }
       await db.query(
         `UPDATE sync_jobs SET status='failed',finished_at=now(),
         available_at=now()+$2*interval '1 second',last_error=$3 WHERE id=$1`,
         [job.id, Math.max(providerWait, Math.min(43200, 1800 * job.attempts)), detail],
-      );
-      // Pending entries are visible but do not replace a newer published session.
-      await db.query(
-        `UPDATE seasons SET published_date=$2,last_updated_at=now()
-        WHERE year=$1 AND (published_date IS NULL OR published_date <= $2)`,
-        [job.year, job.date],
       );
       return false;
     }
@@ -457,7 +488,7 @@ async function deliverNotifications() {
   }
 }
 
-export async function workOnce() {
+export async function workOnce(signal?: AbortSignal) {
   const lock = await pool.connect();
   try {
     const claimed = await one<{ acquired: boolean }>(
@@ -476,7 +507,7 @@ export async function workOnce() {
     const job = await claimJob();
     if (job) {
       try {
-        await processJob(job);
+        await processJob(job, signal);
       } catch (error) {
         const wait = error instanceof ProviderError ? error.wait : 0;
         const message = error instanceof Error ? error.message : "Sync failed";
@@ -491,6 +522,7 @@ export async function workOnce() {
         );
       }
     }
+    if (signal?.aborted) return Boolean(job);
     const finalizing = await query<{ year: number }>(`SELECT year FROM seasons WHERE final_revision IS NULL
       AND ends_at<=now() AND published_date=last_session ORDER BY year LIMIT 4`);
     for (const { year } of finalizing) await finalizeSeason(year);

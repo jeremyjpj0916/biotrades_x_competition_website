@@ -1,5 +1,6 @@
 import { DateTime } from "luxon";
 import { z } from "zod";
+import { setTimeout as waitFor } from "node:timers/promises";
 import { one, query } from "./db";
 import { zone } from "./calendar";
 
@@ -22,14 +23,24 @@ export class ProviderError extends Error {
   }
 }
 
-async function reserve(name: string, interval: number) {
+export type RequestWindow = { signal?: AbortSignal; before?: Date };
+
+async function reserve(name: string, interval: number, window: RequestWindow) {
+  window.signal?.throwIfAborted();
+  const deadline = window.before?.valueOf() ?? Infinity;
+  if (Date.now() >= deadline) return false;
   const slot = await one<{ wait: string }>(
     `INSERT INTO provider_requests VALUES($1,now()+$2*interval '1 millisecond')
     ON CONFLICT(name) DO UPDATE SET next_at=greatest(provider_requests.next_at,clock_timestamp())+$2*interval '1 millisecond'
     RETURNING greatest(0,extract(epoch FROM next_at-clock_timestamp())*1000-$2) AS wait`,
     [name, interval],
   );
-  if (Number(slot.wait) > 0) await new Promise((resolve) => setTimeout(resolve, Number(slot.wait) + 50));
+  const wait = Number(slot.wait);
+  if (wait > 0) {
+    if (Date.now() + wait + 50 >= deadline) return false;
+    await waitFor(wait + 50, undefined, { signal: window.signal });
+  }
+  return Date.now() < deadline;
 }
 export async function providerFetch(
   name: string,
@@ -37,12 +48,14 @@ export async function providerFetch(
   interval: number,
   headers: Record<string, string> = {},
   allowNotFound = false,
+  window: RequestWindow = {},
 ): Promise<Response | undefined> {
-  await reserve(name, interval);
+  if (!(await reserve(name, interval, window))) return;
+  const timeout = AbortSignal.timeout(30000);
   const response = await fetch(url, {
     headers,
     cache: "no-store",
-    signal: AbortSignal.timeout(30000),
+    signal: window.signal ? AbortSignal.any([window.signal, timeout]) : timeout,
     redirect: "error",
   });
   if (response.ok) return response;

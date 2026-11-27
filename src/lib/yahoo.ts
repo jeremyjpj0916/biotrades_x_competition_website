@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ProviderError, providerFetch, type Price } from "./market";
+import { ProviderError, providerFetch, type Price, type RequestWindow } from "./market";
 
 export const yahooSource = "Yahoo Finance · regular-session quotes";
 export const yahooChartSource = "Yahoo Finance · daily chart";
@@ -49,6 +49,7 @@ async function yahooRequest<T>(
   schema: z.ZodType<T>,
   headers: Record<string, string> = {},
   allowNotFound = false,
+  window?: RequestWindow,
 ) {
   const rate = Math.min(5, Math.max(1, Number(process.env.YAHOO_FINANCE_REQUESTS_PER_MINUTE) || 5));
   try {
@@ -58,6 +59,7 @@ async function yahooRequest<T>(
       Math.ceil(60000 / rate),
       { Accept: "application/json", ...headers },
       allowNotFound,
+      window,
     );
     return response ? schema.parse(await response.json()) : undefined;
   } catch (error) {
@@ -105,7 +107,7 @@ function inSession(quotedAt: number, session: SessionWindow) {
   );
 }
 
-export async function yahooDailyChart(symbol: string) {
+export async function yahooDailyChart(symbol: string, window?: RequestWindow) {
   const ticker = yahooSymbol(symbol);
   const url = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}`);
   url.search = new URLSearchParams({
@@ -114,7 +116,7 @@ export async function yahooDailyChart(symbol: string) {
     includePrePost: "false",
     events: "splits",
   }).toString();
-  const payload = await yahooRequest(url, chartResponse, {}, true);
+  const payload = await yahooRequest(url, chartResponse, {}, true, window);
   const chart = payload?.chart.result[0];
   return chart?.meta.symbol === ticker ? chart : undefined;
 }

@@ -9,6 +9,10 @@ export const yearValue = (value: string | undefined) => (value && /^\d{4}$/.test
 export function revealed(season: Season) {
   return !["Upcoming", "Registration open"].includes(season.phase);
 }
+export function marketPublication(season: Season) {
+  if (!revealed(season) || !season.published_date) return null;
+  return `${season.published_date}/${season.last_updated_at?.toISOString() ?? ""}/${season.final_revision ?? ""}`;
+}
 export type Standing = {
   entryId: string;
   profileId: string;
@@ -267,7 +271,9 @@ export async function getStockSeries(season: Season, security: string) {
   return query<{ date: string; close: string }>(
     `SELECT d.session_date::text AS date,d.close FROM daily_prices d
     JOIN seasons s ON s.year=$1 AND s.locks_at<=now() WHERE d.security_id=$2 AND d.session_date BETWEEN s.first_session AND s.published_date
-    AND d.source NOT LIKE 'Market History%' ORDER BY d.session_date`,
+    AND d.source NOT LIKE 'Market History%' AND EXISTS (
+      SELECT 1 FROM daily_standings p WHERE p.year=s.year AND p.session_date=d.session_date
+    ) ORDER BY d.session_date`,
     [season.year, security],
   );
 }
