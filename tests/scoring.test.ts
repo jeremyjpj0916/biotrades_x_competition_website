@@ -43,6 +43,33 @@ describe("competition scoring", () => {
       score(series(bar("a", dates[1], "22"), bar("a", dates[2], "24")), [action({ ratio: ".5" })]),
     ).toMatchObject({ value: "12", pct: "20" });
   });
+  it("does not credit adjustments already reflected in the first-session open", () => {
+    const openingActions = [
+      action({ effective_date: dates[0], kind: "split", ratio: "2" }),
+      action({ effective_date: dates[0], kind: "distribution", cash: "3" }),
+      action({ effective_date: dates[0], kind: "spin_off", successor_id: "b", ratio: "1" }),
+    ];
+    const tracked = new Set<string>();
+    expect(valuePosition("a", dates[0], dates[0], dates, series(), openingActions, tracked)).toMatchObject({
+      value: "11",
+      pct: "10",
+    });
+    expect([...tracked]).toEqual(["a"]);
+    expect(
+      score(
+        series(
+          bar("a", dates[1], "11"),
+          bar("a", dates[2], "12"),
+          bar("b", dates[1], "2"),
+          bar("b", dates[2], "2"),
+        ),
+        [
+          action({ kind: "distribution", cash: "3" }),
+          action({ kind: "spin_off", successor_id: "b", ratio: "1" }),
+        ],
+      ),
+    ).toMatchObject({ value: "17", pct: "70" });
+  });
   it("carries cash acquisitions and computes mixed and stock successors", () => {
     expect(score(series(), [action({ kind: "cash", cash: "15" })])).toMatchObject({
       status: "acquired",

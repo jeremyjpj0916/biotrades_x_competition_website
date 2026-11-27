@@ -42,7 +42,9 @@ export function valuePosition(
   dates: string[],
   bars: Map<string, StoredBar>,
   actions: Action[],
+  trackedSecurities?: Set<string>,
 ): Valuation {
+  trackedSecurities?.add(id);
   const opening = bars.get(`${id}/${first}`)?.open ?? null;
   const missing = (status: string): Valuation => ({
     start: opening,
@@ -69,7 +71,10 @@ export function valuePosition(
     while (actionIndex < actions.length && actions[actionIndex].effective_date <= date) {
       const action = actions[actionIndex++];
       const shares = positions.get(action.security_id);
-      if (!shares || (action.effective_date <= first && action.kind === "split")) continue;
+      // The opening trade already reflects actions that took effect before that purchase.
+      const openingAdjustment =
+        action.kind === "split" || action.kind === "distribution" || action.kind === "spin_off";
+      if (!shares || (action.effective_date <= first && openingAdjustment)) continue;
       const ratio = action.ratio == null ? null : new D(action.ratio);
       const proceeds = action.cash == null ? null : new D(action.cash);
       if (action.kind === "review") return missing("action under review");
@@ -81,6 +86,7 @@ export function valuePosition(
       if (["stock", "mixed", "spin_off", "delist"].includes(action.kind) && action.successor_id && ratio) {
         const successor = positions.get(action.successor_id) ?? new D(0);
         positions.set(action.successor_id, successor.plus(shares.times(ratio)));
+        trackedSecurities?.add(action.successor_id);
       }
       if (["cash", "stock", "mixed", "cancel", "delist"].includes(action.kind)) {
         if (action.kind === "delist" && !action.successor_id && proceeds == null)

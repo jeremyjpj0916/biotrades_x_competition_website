@@ -74,32 +74,30 @@ export async function rebuildStandings(year: number, date: string, db: Database)
     [year, date],
     db,
   );
-  const scores = new Map(
-    universe.roots.map((id) => [
-      id,
-      valuePosition(id, season.first_session, date, dates, bars, universe.actions),
-    ]),
-  );
+  const reviewBySecurity = new Map<string, string>();
   for (const { security_id, category } of reviews) {
-    const affected = [
-      security_id,
-      ...universe.actions
-        .filter((action) => action.successor_id === security_id && action.effective_date <= date)
-        .map((action) => action.security_id),
-    ];
-    for (const id of affected) {
-      const score = scores.get(id);
-      if (score)
-        scores.set(id, {
-          ...score,
-          close: null,
-          value: null,
-          pct: null,
-          previousPct: null,
-          status: category === "eligibility" ? "eligibility under review" : "action under review",
-        });
-    }
+    if (category === "eligibility" || !reviewBySecurity.has(security_id))
+      reviewBySecurity.set(security_id, category);
   }
+  const scores = new Map(
+    universe.roots.map((id) => {
+      const tracked = new Set<string>();
+      const score = valuePosition(id, season.first_session, date, dates, bars, universe.actions, tracked);
+      let status: string | undefined;
+      for (const security of tracked) {
+        const category = reviewBySecurity.get(security);
+        if (category === "eligibility") {
+          status = "eligibility under review";
+          break;
+        }
+        if (category) status = "action under review";
+      }
+      return [
+        id,
+        status ? { ...score, close: null, value: null, pct: null, previousPct: null, status } : score,
+      ] as const;
+    }),
+  );
   const ranks = competitionRanks(
     scores,
     universe.entries.filter((entry) => !entry.disqualified_reason),

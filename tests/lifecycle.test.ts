@@ -141,6 +141,41 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("PostgreSQL annual lifecycle", (
         [stock.id, final, stock.symbol, stock.id === a.id ? 15 : stock.id === b.id ? 8 : 12],
       );
     }
+    const successor = await saveSecurity({
+      key: `fixture:successor:${year}`,
+      symbol: `S${suffix}`,
+      name: "Successor biotech",
+      exchange: "XNAS",
+      instrument: "common:common",
+      eligible: true,
+    });
+    await transaction(async (db) => {
+      await db.query("SAVEPOINT successor_review");
+      await db.query(
+        `INSERT INTO corporate_actions(security_id,effective_date,sequence,kind,ratio,successor_id,source)
+        VALUES($1,$4,1,'stock',1,$2,'Verified fixture'),($2,$4,2,'stock',1,$3,'Verified fixture')`,
+        [a.id, b.id, successor.id, final],
+      );
+      await db.query(
+        `INSERT INTO daily_prices(security_id,session_date,symbol,open,close,source)
+        VALUES($1,$2,$3,10,15,'Verified fixture')`,
+        [successor.id, final, successor.symbol],
+      );
+      await db.query(
+        "INSERT INTO security_reviews(year,security_id,category,message,effective_date) VALUES($1,$2,'action:fixture','Pending successor terms',$3)",
+        [year, successor.id, final],
+      );
+      expect((await rebuildStandings(year, first, db)).unresolved).toBe(0);
+      expect((await rebuildStandings(year, final, db)).unresolved).toBe(3);
+      expect(
+        await query<{ rank: number | null; status: string }>(
+          "SELECT rank,status FROM daily_standings WHERE year=$1 AND session_date=$2",
+          [year, final],
+          db,
+        ),
+      ).toEqual(Array.from({ length: 3 }, () => ({ rank: null, status: "action under review" })));
+      await db.query("ROLLBACK TO SAVEPOINT successor_review");
+    });
     await transaction(async (db) => {
       for (const date of [first, final]) {
         expect((await rebuildStandings(year, date, db)).unresolved).toBe(0);
